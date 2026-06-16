@@ -254,7 +254,11 @@ try
     tutto_utenti = fetch(db_conn, 'SELECT * FROM Utenti;');
     if ~isempty(tutto_utenti)
         % Trasforma in tabella usando i nomi automatici delle colonne di MATLAB
-        disp(array2table(tutto_utenti));
+                % Creazione tabella MATLAB e sovrascrittura metadati per evitare doppioni
+        T_utenti = array2table(tutto_utenti);
+        T_utenti.Properties.VariableNames = {'ID_Utente', 'Nome_Utente', 'Lunghezza_Braccio_cm'};
+        disp(T_utenti);
+
     else
         fprintf('Tabella Utenti vuota.\n');
     end
@@ -266,7 +270,12 @@ try
     tutto_sessioni = fetch(db_conn, 'SELECT * FROM StoricoSessioni;');
     if ~isempty(tutto_sessioni)
         % Trasforma in tabella usando i nomi automatici delle colonne di MATLAB
-        disp(array2table(tutto_sessioni));
+                % Creazione tabella MATLAB e sovrascrittura metadati per evitare doppioni
+        T_sessioni = array2table(tutto_sessioni);
+        T_sessioni.Properties.VariableNames = {'ID_Sessione', 'ID_Utente', 'Data_Ora', 'Giri_Spalla', 'Calorie_Kcal', 'Velocita_Rad_s'};
+        disp(T_sessioni);
+
+
     else
         fprintf('Tabella StoricoSessioni vuota.\n');
     end
