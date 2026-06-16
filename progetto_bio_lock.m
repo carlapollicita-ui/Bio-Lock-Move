@@ -1,19 +1,77 @@
 %% --- BIOLOCK & MOVE: DIGITAL WELLNESS ---
 % Studentessa: Carla Pollicita
 % Anno: 2025/2026
-% Corso di Laurea: Ingegneria Biomedica —Università degli studi di Messina
+% Corso di Laurea: Ingegneria Biomedica — Università degli studi di Messina
 % Corso: "Fondamenti di Informatica"
 % Professore: Luca D'Agati
 
 clear all; close all; clc;
 
 
-%% 1. INIZIALIZZAZIONE SENSORI
+%% 1. INIZIALIZZAZIONE SENSORI E RICHIESTA NOME UTENTE
 fprintf('Inizializzazione sensori iPhone...\n');
 try
     m = mobiledev; m.AccelerationSensorEnabled = 1;
 catch
     error('Configura il telefono su "Streaming su: MATLAB" e clicca "START".');
+end
+
+
+% --- RICHIESTA DATI UTENTE ---
+fprintf('\n==================================================\n');
+fprintf('       BENVENUTO IN BIO-LOCK & MOVE               \n');
+fprintf('==================================================\n\n');
+
+nome_inserito = input('Inserisci il tuo nome utente per iniziare: ', 's');
+nome_inserito = strtrim(nome_inserito); 
+
+if isempty(nome_inserito)
+    nome_inserito = 'Utente_Ospite'; 
+end
+
+% Richiesta del peso corporeo
+peso_input = input('Inserisci il tuo peso in kg: ');
+if isempty(peso_input) || isnan(peso_input) || peso_input <= 0
+    peso_utente = 50.0; % Valore di default se non inserisce nulla di valido
+else
+    peso_utente = peso_input;
+end
+
+
+% --- CONNESSIONE AL DATABASE ---
+fprintf('\nConnessione al database SQL relazionale...\n');
+db_conn = sqlite('biolock_database.db', 'connect');
+
+% Creazione preventiva delle due tabelle collegate relazionalmente (Padre e Figlio)
+execute(db_conn, ['CREATE TABLE IF NOT EXISTS Utenti (' ...
+                  'ID_Utente INTEGER PRIMARY KEY AUTOINCREMENT, ' ...
+                  'Nome TEXT, ' ...
+                  'Peso_Kg REAL)']);
+
+execute(db_conn, ['CREATE TABLE IF NOT EXISTS StoricoSessioni (' ...
+                  'ID_Sessione INTEGER PRIMARY KEY AUTOINCREMENT, ' ...
+                  'ID_Utente INTEGER, ' ...
+                  'Data_Ora TEXT, ' ...
+                  'Giri_Spalla INTEGER, ' ...
+                  'Calorie_Kcal REAL, ' ...
+                  'Velocita_Rad_s REAL, ' ...
+                  'FOREIGN KEY(ID_Utente) REFERENCES Utenti(ID_Utente))']);
+
+% Verifichiamo se l'utente esiste già (Tabella Padre)
+query_cerca = sprintf("SELECT ID_Utente FROM Utenti WHERE Nome = '%s';", nome_inserito);
+risultato_ricerca = fetch(db_conn, query_cerca);
+
+if isempty(risultato_ricerca)
+    % Se non esiste lo inseriamo nella tabella Padre con il suo peso REALE inserito!
+    execute(db_conn, sprintf("INSERT INTO Utenti (Nome, Peso_Kg) VALUES ('%s', %.1f);", nome_inserito, peso_utente));
+    
+    % Recuperiamo l'ID appena assegnato
+    risultato_id = fetch(db_conn, sprintf("SELECT ID_Utente FROM Utenti WHERE Nome = '%s';", nome_inserito));
+    id_utente_corrente = risultato_id{1, 1};
+else
+    % Se esiste già, prendiamo il suo ID vecchio e aggiorniamo il peso se è cambiato
+    id_utente_corrente = risultato_ricerca{1, 1};
+    execute(db_conn, sprintf("UPDATE Utenti SET Peso_Kg = %.1f WHERE ID_Utente = %d;", peso_utente, id_utente_corrente));
 end
 
 
@@ -42,6 +100,7 @@ for t = tempo_lavoro : -1 : 0
 end
 close(hWidget);
 
+
 %% 3. CREAZIONE FINESTRA UNICA (Sfondo iniziale chiaro)
 hFig = figure('Name', 'Bio-Lock & Move', 'NumberTitle', 'off', 'MenuBar', 'none', 'ToolBar', 'none', 'Color', [0.94 0.94 0.94]); 
 set(hFig, 'WindowState', 'maximized');
@@ -51,7 +110,7 @@ hAxAlbero = axes('Parent', hFig, 'Position', [0.30, 0.2, 0.4, 0.6]);
 axis(hAxAlbero, 'off'); axis(hAxAlbero, 'image'); axis(hAxAlbero, 'equal'); 
 xlim(hAxAlbero, [-20 120]); ylim(hAxAlbero, [-10 70]);
 
-% grafico nascosto sulla destra
+% Grafico nascosto sulla destra
 hAxPlot = axes('Parent', hFig, 'Position', [0.52, 0.2, 0.43, 0.55]); set(hAxPlot, 'Visible', 'off'); 
 
 hText = uicontrol('Style', 'text', 'String', '', 'FontSize', 15, 'FontName', 'Avenir Next', 'FontWeight', 'bold', ...
@@ -79,10 +138,11 @@ hFiore2 = fill(hAxAlbero, 60+3*cos(t_cerchio), 32+3*sin(t_cerchio), [1 0.4 0.6],
 hFiore3 = fill(hAxAlbero, 52+3*cos(t_cerchio), 35+3*sin(t_cerchio), [1 0.5 0.5], 'EdgeColor', 'none'); set(hFiore3, 'Visible', 'off');
 drawnow;
 
-%% 4. ALGORITMO RILEVAMENTO ROTAZIONI, CALORIE E VELOCITÀ (TARATURA BILANCIATA)
-discardlogs(m); rotazioni_necessarie = 10; rotazioni_totali = 0; ultima_rotazione = 0;
 
-while rotazioni_totali < rotazioni_necessarie
+%% 4. ALGORITMO RILEVAMENTO ROTAZIONI, CALORIE E VELOCITÀ (TARATURA BILANCIATA)
+discardlogs(m); rotazioni_necessarie = 10; rotazioni = 0; ultima_rotazione = 0;
+
+while rotazioni < rotazioni_necessarie
     if ~ishandle(hFig), error('Finestra chiusa.'); end
     [log_a, ~] = accellog(m);
     
@@ -103,24 +163,25 @@ while rotazioni_totali < rotazioni_necessarie
                 end
             end
         end
-        rotazioni_totali = length(posizioni);
+        rotazioni = length(posizioni);
+        rotazioni_totali = rotazioni; % Allineamento variabile di backup
         
         % Calcolo velocità e calorie
         raggio_braccio = 0.6; 
         omega_media = mean(sqrt(abs(acc_rotazione(posizioni))) / raggio_braccio);
         if isnan(omega_media), omega_media = 0; end
-        calorie_stimate = rotazioni_totali * 0.15;
+        calorie_stimate = rotazioni * 0.15;
         
         set(hText, 'String', sprintf('Spalla: %d/%d giri | Velocità: %.1f rad/s | Energia: %.2f kcal', ...
-            rotazioni_totali, rotazioni_necessarie, omega_media, calorie_stimate));
+            rotazioni, rotazioni_necessarie, omega_media, calorie_stimate));
         
-        if rotazioni_totali > ultima_rotazione, beep; ultima_rotazione = rotazioni_totali; end
+        if rotazioni > ultima_rotazione, beep; ultima_rotazione = rotazioni; end
         
         % Crescita dinamica dell'albero
-        if rotazioni_totali >= 3 && rotazioni_totali < 6
+        if rotazioni >= 3 && rotazioni < 6
             set(hTronco, 'XData', [50 52 55 52], 'YData', [0 15 25 0]);
             set(hFoglia1, 'XData', 45+7*cos(t_cerchio), 'YData', 18+4*sin(t_cerchio)); set(hFoglia2, 'Visible', 'on');
-        elseif rotazioni_totali >= 6
+        elseif rotazioni >= 6
             set(hTronco, 'XData', [48 52 56 54], 'YData', [0 25 40 0], 'FaceColor', [0.5 0.35 0.2]); 
             set(hChioma, 'Visible', 'on'); set(hFoglia1, 'Visible', 'off'); set(hFoglia2, 'Visible', 'off');
         end
@@ -165,44 +226,60 @@ xlabel(hAxPlot, 'Campioni Temporali (n)'); ylabel(hAxPlot, 'Forza Accelerativa D
 set(hAxPlot, 'Visible', 'on'); drawnow;
 
 
-%% 6. ARCHIVIAZIONE DATI IN DATABASE RELAZIONALE (CON CONTROLLO DI SICUREZZA)
-fprintf('Connessione al database SQL relazionale...\n');
-
-% Controllo esistenza file per evitare l'errore "SQLite file exists"
-if exist('biolock_database.db', 'file')
-    db_conn = sqlite('biolock_database.db', 'connect');
-else
-    db_conn = sqlite('biolock_database.db', 'create');
-end
-
-% Creazione delle due tabelle collegate relazionalmente
-execute(db_conn, ['CREATE TABLE IF NOT EXISTS Utenti (' ...
-                  'ID_Utente INTEGER PRIMARY KEY AUTOINCREMENT, ' ...
-                  'Nome TEXT, ' ...
-                  'Peso_Kg REAL)']);
-
-execute(db_conn, ['CREATE TABLE IF NOT EXISTS StoricoSessioni (' ...
-                  'ID_Sessione INTEGER PRIMARY KEY AUTOINCREMENT, ' ...
-                  'ID_Utente INTEGER, ' ...
-                  'Data_Ora TEXT, ' ...
-                  'Giri_Spalla INTEGER, ' ...
-                  'Calorie_Kcal REAL, ' ...
-                  'Velocita_Rad_s REAL, ' ...
-                  'FOREIGN KEY(ID_Utente) REFERENCES Utenti(ID_Utente))']);
-
-% Inserimento utente di default se il database è totalmente vuoto
-check_utenti = fetch(db_conn, 'SELECT COUNT(*) FROM Utenti');
-if check_utenti{1,1} == 0
-    execute(db_conn, 'INSERT INTO Utenti (Nome, Peso_Kg) VALUES ("Carla", 50.0)');
-end
-
-% Cattura timestamp e inserimento sessione corrente
+%% 6. ARCHIVIAZIONE DATI IN DATABASE RELAZIONALE
+% Cattura del timestamp corrente
 data_ora_attuale = string(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
+
+% Generazione ed esecuzione della query di inserimento sessione legata all'ID Utente
 query_insert = sprintf(['INSERT INTO StoricoSessioni ' ...
-                        '(ID_Utente, Data_Ora, Giri_Spalla, Calorie_Kcal, Velocita_Rad_s) ' ...
-                        'VALUES (1, "%s", %d, %.2f, %.2f)'], ...
-                        data_ora_attuale, rotazioni_totali, calorie_stimate, omega_media);
+    '(ID_Utente, Data_Ora, Giri_Spalla, Calorie_Kcal, Velocita_Rad_s) ' ...
+    'VALUES (%d, "%s", %d, %.2f, %.2f)'], ...
+    id_utente_corrente, data_ora_attuale, rotazioni, calorie_stimate, omega_media);
+
 execute(db_conn, query_insert);
+
+% Visualizzazione del tabellone dello storico riassuntivo 
+fprintf('\n==================================================\n');
+fprintf('     STORICO AGGIORNATO PER L''UTENTE: %s\n', upper(nome_inserito));
+fprintf('==================================================\n');
+
+% VISUALIZZAZIONE INTEGRALE DEL DATABASE CON TUTTE LE COLONNE 
+fprintf('\n==================================================\n');
+fprintf('     VISUALIZZAZIONE COMPLETA DEL DATABASE        \n');
+fprintf('==================================================\n');
+
+try
+    % 1. Estrazione e stampa della Tabella PADRE (Utenti)
+    fprintf('\n>>> TABELLA PADRE: "Utenti" <<<\n');
+    tutto_utenti = fetch(db_conn, 'SELECT * FROM Utenti;');
+    if ~isempty(tutto_utenti)
+        % Trasforma in tabella usando i nomi automatici delle colonne di MATLAB
+        disp(array2table(tutto_utenti));
+    else
+        fprintf('Tabella Utenti vuota.\n');
+    end
+    
+    fprintf('--------------------------------------------------\n');
+    
+    % 2. Estrazione e stampa della Tabella FIGLIO (StoricoSessioni)
+    fprintf('\n>>> TABELLA FIGLIO: "StoricoSessioni" <<<\n');
+    tutto_sessioni = fetch(db_conn, 'SELECT * FROM StoricoSessioni;');
+    if ~isempty(tutto_sessioni)
+        % Trasforma in tabella usando i nomi automatici delle colonne di MATLAB
+        disp(array2table(tutto_sessioni));
+    else
+        fprintf('Tabella StoricoSessioni vuota.\n');
+    end
+
+catch
+    % Se i dati sono in formato testo/misto, usiamo la stampa cruda senza fronzoli
+    fprintf('\n>>> DATI UTENTI <<<\n');
+    disp(tutto_utenti);
+    fprintf('--------------------------------------------------\n');
+    fprintf('\n>>> DATI STORICO SESSIONI <<<\n');
+    disp(tutto_sessioni);
+end
+fprintf('==================================================\n\n');
 
 % Chiusura connessione e disattivazione sensori
 close(db_conn);
