@@ -272,7 +272,7 @@ try
     end
 
 catch
-    % Se i dati sono in formato testo/misto, usiamo la stampa cruda senza fronzoli
+    % Se i dati sono in formato testo/misto, stampa diretta
     fprintf('\n>>> DATI UTENTI <<<\n');
     disp(tutto_utenti);
     fprintf('--------------------------------------------------\n');
